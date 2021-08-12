@@ -1,3 +1,5 @@
+from tqdm.notebook import tqdm
+from deepnote import MusicRepr, Constants
 import torch
 from torch import nn
 import pytorch_lightning as pl
@@ -28,7 +30,7 @@ class BasePerformer(pl.LightningModule):
     def count_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
     
-    def forward(self, inst, src, src_len, trg, trg_len, labels=None):
+    def forward(self, inst, src, trg, src_len=None, trg_len=None, labels=None):
         assert inst in self.heads
         
         ## make all masks
@@ -62,8 +64,8 @@ class BasePerformer(pl.LightningModule):
             logits, loss = self.forward(
                 inst, 
                 batch[inst]['src'], 
-                batch[inst]['src_len'], 
                 batch[inst]['trg'], 
+                batch[inst]['src_len'], 
                 batch[inst]['trg_len'], 
                 batch[inst]['labels']
             )
@@ -114,33 +116,30 @@ class BasePerformer(pl.LightningModule):
         return cross_att_mask
     
     
-    def generate(self, trg_inst, seq=None, window_len=1, max_len=1000, top_p=1., t=1.):
+    def generate(self, trg_inst, seq, window=1, top_p=1., t=1., device='cuda'):
         self.eval()
+        self.to(device)
 
         bars = seq.get_bars()
         n_bars = len(bars)
-
+        res = []
         with torch.no_grad():
             for i in tqdm(range(n_bars)):
-                s = max(0, i - window_len + 1)
-                x = np.array(MusicRepr.concatenate(bars[s:i+1]).to_remi(ret='index') + [0])
-                inputs = {
-                    trg_inst: {
-                        'src' : torch.tensor(x).long().to(self.device).unsqueeze(0)
-                    }
-                }
+                s = max(0, i - window + 1)
+                src = MusicRepr.concatenate(bars[s:i+1]).to_remi(ret='index') + [0]
+                src = torch.tensor(src).long().to(device).unsqueeze(0)
 
                 res_bar = [0]
                 while True:
-                    inputs[trg_inst]['trg'] = torch.tensor(res_bar).long().to(self.device). unsqueeze(0)
-                    logits = self.forward_s2s(trg_inst=trg_inst, inputs=inputs)
+                    trg = torch.tensor(res_bar).long().to(device). unsqueeze(0)
+                    logits, _ = self.forward(trg_inst, src, trg)
                     next_tok = nucleus_sample(logits[0, -1, :].detach().cpu(), top_p=top_p, t=t)
                     if next_tok == 0:
                         break
                     res_bar += [next_tok]
 
                 res += res_bar
-        return np.array(res)
+        return res
 
    
     
