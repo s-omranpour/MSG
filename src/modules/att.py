@@ -51,10 +51,10 @@ class Attention(nn.Module):
                 query_length_mask : torch.Tensor = None):
         
         if query_length_mask is not None:
-            q = q.masked_fill(query_length_mask[:,:,None] == 0., 0.)
+            q = q.masked_fill(query_length_mask[...,None] == 0., 0.)
         if key_length_mask is not None:
-            k = k.masked_fill(key_length_mask[:,:,None] == 0., 0.)
-            v = v.masked_fill(key_length_mask[:,:,None] == 0., 0.)
+            k = k.masked_fill(key_length_mask[...,None] == 0., 0.)
+            v = v.masked_fill(key_length_mask[...,None] == 0., 0.)
 
         q = self._split_heads(self.Q(q))
         k = self._split_heads(self.K(k))
