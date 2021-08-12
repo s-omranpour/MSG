@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import pytorch_lightning as pl
 
-from src.modules import RemiEmbedding, RemiHead, TransformerDecoder, nucleus_sample
+from src.modules import RemiEmbedding, RemiHead, TransformerDecoderLayer, nucleus_sample
 
 class BasePerformer(pl.LightningModule):
     def __init__(self, config):
@@ -11,7 +11,8 @@ class BasePerformer(pl.LightningModule):
         self.criterion = nn.CrossEntropyLoss(reduction='none')
         
         self.embedding = RemiEmbedding(config['embedding'])
-        self.decoder = TransformerDecoder(config['decoder'])
+        layer = TransformerDecoderLayer(config['decoder'])
+        self.decoder = nn.TransformerDecoder(layer, config['decoder']['n_layer'])
         self.heads = nn.ModuleDict(
             [
                 [inst, RemiHead(self.config['head'])] 
@@ -29,23 +30,25 @@ class BasePerformer(pl.LightningModule):
     
     def forward(self, inst, src, src_len, trg, trg_len, labels=None):
         assert inst in self.heads
-        ## embedding
-        x = self.embedding(trg.long())
-        memories = self.embedding(src.long())
         
         ## make all masks
-        x_length_mask = self._generate_length_mask(trg_len)
-        memories_length_mask = self._generate_length_mask(src_len)
-        cross_att_mask = self._generate_cross_att_mask(src, memories_length_mask, trg, x_length_mask)
+        src_length_mask = self._generate_length_mask(src_len)
+        trg_length_mask = self._generate_length_mask(trg_len)
+        self_att_mask = self._generate_self_att_mask(trg.shape[1]).to(trg.device)
+        cross_att_mask = self._generate_cross_att_mask(src, src_length_mask, trg, trg_length_mask)
+        
+        ## embedding
+        trg = self.embedding(trg.long())
+        src = self.embedding(src.long())
 
         ## decoder
-        h = self.decoder(x, x_length_mask, memories, memories_length_mask, cross_att_mask)
+        h = self.decoder(trg, src, self_att_mask, cross_att_mask, trg_length_mask, src_length_mask)
         
         ## head
         logits = torch.nan_to_num(self.heads[inst](h))
         loss = None
         if labels is not None:
-            loss = self.calculate_loss(logits, labels.long(), (~x_length_mask).float())
+            loss = self.calculate_loss(logits, labels.long(), trg_length_mask)
         return logits, loss
     
     def calculate_loss(self, logits, labels, mask):
@@ -77,26 +80,28 @@ class BasePerformer(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         self.step(batch, mode='val')
         
+    def _generate_self_att_mask(self, sz):
+        return torch.tril(torch.ones(sz, sz))
+        
     def _generate_length_mask(self, lengths):
         if lengths is None:
             return None
-        mask = torch.ones(len(lengths), max(lengths)).to(lengths.device).bool()
+        mask = torch.zeros(len(lengths), max(lengths)).to(lengths.device)
         for i,l in enumerate(lengths):
-            mask[i, :l] = False
+            mask[i, :l] = 1.
         return mask
     
     def _generate_cross_att_mask(self, src, src_length_mask, trg, trg_length_mask):
         if src_length_mask is None or trg_length_mask is None:
             return None
         
-        cross_att_mask = torch.ones(src.shape[0], trg.shape[1], src.shape[1]).to(src.device).bool()
-        
-        src_bar_mask = (src == 0) * ~src_length_mask
-        trg_bar_mask = (trg == 0) * ~trg_length_mask
+        cross_att_mask = torch.zeros(src.shape[0], trg.shape[1], src.shape[1]).to(src.device)
+        src_bar_mask = (src == 0) * src_length_mask
+        trg_bar_mask = (trg == 0) * trg_length_mask
 
         for i in range(src.shape[0]):
-            src_bars = torch.where(src_bar_mask[i])[0].tolist() + [sum(~src_length_mask[i]).item()]
-            trg_bars = torch.where(trg_bar_mask[i])[0].tolist() + [sum(~trg_length_mask[i]).item()]
+            src_bars = torch.where(src_bar_mask[i] == 1.)[0].tolist() + [sum(src_length_mask[i]).int().item()]
+            trg_bars = torch.where(trg_bar_mask[i] == 1.)[0].tolist() + [sum(trg_length_mask[i]).int().item()]
             assert len(trg_bars) == len(src_bars), f"trg_bars={trg_bars} length is not equal to src_bars={src_bars} length"
             n_bars = len(src_bars)
 
@@ -105,7 +110,7 @@ class BasePerformer(pl.LightningModule):
                 s_trg = trg_bars[j]         ## trg j_th bar start
                 e_trg = trg_bars[j+1]       ## trg j_th bar end
                 e_src = src_bars[j+1]       ## src j_th bar end
-                cross_att_mask[i, s_trg:e_trg, :e_src] = False
+                cross_att_mask[i, s_trg:e_trg, :e_src] = 1.
         return cross_att_mask
     
     
