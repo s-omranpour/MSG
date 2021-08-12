@@ -71,10 +71,12 @@ class BasePerformer(pl.LightningModule):
             )
             losses += [loss]
             self.log(mode + '_' + str(inst), loss.item())
-
-        total_loss = sum(losses) / len(losses) if len(losses) else 0.
-        self.log(mode + '_loss', total_loss.item())
-        return total_loss
+        
+        if len(losses):
+            total_loss = sum(losses) / len(losses)
+            self.log(mode + '_loss', total_loss.item())
+            return total_loss
+        return None
         
     def training_step(self, batch, batch_idx):
         return self.step(batch)
