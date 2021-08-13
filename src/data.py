@@ -52,13 +52,7 @@ class MidiDataset(Dataset):
         self.pad_value = pad_value
 
         ## loading midis
-        files = sorted(
-            list(
-                filter(lambda x: x.endswith('.mid'), os.listdir(data_dir))
-            )[:max_files], 
-            key=lambda x: os.stat(data_dir + x).st_size, 
-            reverse=True
-        )
+        files = list(filter(lambda x: x.endswith('.mid'), os.listdir(data_dir)))[:max_files]
         
 #         tracks = Parallel(n_jobs=n_jobs)(
 #             delayed(get_track)(
@@ -66,8 +60,6 @@ class MidiDataset(Dataset):
 #             ) for file in tqdm(files)
 #         )
         tracks = [get_track(data_dir + file, const, window_len, src_instruments, trg_instruments) for file in tqdm(files)]
-        
-        
         self.tracks = list(filter(lambda x: x is not None, tracks))
         lens = list(map(lambda x: len(x[0]), self.tracks))
         self.lens = [max(0, l - self.window_len) + 1 for l in lens]
