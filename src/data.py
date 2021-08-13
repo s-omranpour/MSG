@@ -7,12 +7,17 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from joblib import Parallel, delayed
 from deepnote import MusicRepr, Constants
 
-def get_track(file_path, const, window, instruments):
+def get_track(file_path, const, window, src_instruments, trg_instruments):
     try:
         seq = MusicRepr.from_file(file_path, const=const)
-        seq_insts = seq.get_instruments()
-        if len(set(seq_insts).intersection(set(instruments))) > 0 and len(seq_insts) > 1:
-            return seq.get_bars()
+        seq_insts = set(seq.get_instruments())
+        ## seq should have at least 1 src instrument and 1 trg instrument
+        if len(seq_insts.intersection(set(src_instruments))) > 0\
+        and len(seq_insts.intersection(set(trg_instruments))) > 0\
+        and len(seq_insts.intersection(set(src_instruments).union(set(trg_instruments)))) > 1:
+            src_seq = seq.keep_instruments(src_instruments)
+            trg_seq = seq.keep_instruments(trg_instruments)
+            return src_seq.get_bars(), trg_seq.get_bars()
         return None
     except Exception as e:
         print(e)
@@ -31,7 +36,8 @@ class MidiDataset(Dataset):
         self, 
         data_dir : str, 
         const : Constants = None, 
-        instruments : List[str] = ['piano'],
+        trg_instruments : List[str] = ['piano'],
+        src_instruments : List[str] = ['piano'],
         pad_value : int = 0,
         max_files : int = 100, 
         window_len : int = 10,
@@ -41,7 +47,8 @@ class MidiDataset(Dataset):
 
         self.const = Constants() if const is None else const
         self.window_len = window_len
-        self.instruments = instruments
+        self.trg_instruments = trg_instruments
+        self.src_instruments = src_instruments
         self.pad_value = pad_value
 
         ## loading midis
@@ -53,12 +60,16 @@ class MidiDataset(Dataset):
             reverse=True
         )
         
-        tracks = Parallel(n_jobs=n_jobs)(
-            delayed(get_track)(data_dir + file, const, window_len, instruments) for file in tqdm(files)
-        )
+#         tracks = Parallel(n_jobs=n_jobs)(
+#             delayed(get_track)(
+#                 data_dir + file, const, window_len, src_instruments, trg_instruments
+#             ) for file in tqdm(files)
+#         )
+        tracks = [get_track(data_dir + file, const, window_len, src_instruments, trg_instruments) for file in tqdm(files)]
+        
         
         self.tracks = list(filter(lambda x: x is not None, tracks))
-        lens = list(map(len, self.tracks))
+        lens = list(map(lambda x: len(x[0]), self.tracks))
         self.lens = [max(0, l - self.window_len) + 1 for l in lens]
         self.cum_lens = [0] + [sum(self.lens[:i+1]) for i in range(len(self.lens))]
 
@@ -72,16 +83,16 @@ class MidiDataset(Dataset):
 
     def __getitem__(self, idx):
         ind, offset = self.get_idx(idx)
-        seq = MusicRepr.concatenate(self.tracks[ind][offset:offset + self.window_len])
+        src_bars, trg_bars = self.tracks[ind]
+        src_seq = MusicRepr.concatenate(src_bars[offset:offset + self.window_len])
+        trg_seq = MusicRepr.concatenate(trg_bars[offset:offset + self.window_len])
         res = {}
-        for inst in self.instruments:
-            tracks = seq.separate_tracks()
-            if inst in tracks:
-                trg = tracks[inst].to_remi(ret='index') + [0]
-                acc_tracks = dict([(x, tracks[x]) for x in tracks if x != inst])
-                if len(acc_tracks):
-                    src = MusicRepr.merge_tracks(acc_tracks).to_remi(ret='index') + [0]
-                    res[inst] = {'src' : src, 'trg' : trg}
+        for trg_inst in trg_seq.get_instruments():
+            if len(set(src_seq.get_instruments()).difference(set([trg_inst]))) > 0:
+                res[trg_inst] = {
+                    'src' : src_seq.remove_instruments([trg_inst]).to_remi(ret='index') + [0], 
+                    'trg' : trg_seq.keep_instruments([trg_inst]).to_remi(ret='index') + [0]
+                }
         return res
 
 
