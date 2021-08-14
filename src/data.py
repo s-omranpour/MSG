@@ -40,6 +40,7 @@ class MidiDataset(Dataset):
         src_instruments : List[str] = ['piano'],
         pad_value : int = 0,
         max_files : int = 100, 
+        max_len : int = 1024,
         window_len : int = 10,
         n_jobs : int = 2):
 
@@ -47,6 +48,7 @@ class MidiDataset(Dataset):
 
         self.const = Constants() if const is None else const
         self.window_len = window_len
+        self.max_len = max_len
         self.trg_instruments = trg_instruments
         self.src_instruments = src_instruments
         self.pad_value = pad_value
@@ -54,12 +56,12 @@ class MidiDataset(Dataset):
         ## loading midis
         files = list(filter(lambda x: x.endswith('.mid'), os.listdir(data_dir)))[:max_files]
         
-#         tracks = Parallel(n_jobs=n_jobs)(
-#             delayed(get_track)(
-#                 data_dir + file, const, window_len, src_instruments, trg_instruments
-#             ) for file in tqdm(files)
-#         )
-        tracks = [get_track(data_dir + file, const, window_len, src_instruments, trg_instruments) for file in tqdm(files)]
+        tracks = Parallel(n_jobs=n_jobs)(
+            delayed(get_track)(
+                data_dir + file, const, window_len, src_instruments, trg_instruments
+            ) for file in tqdm(files)
+        )
+#         tracks = [get_track(data_dir + file, const, window_len, src_instruments, trg_instruments) for file in tqdm(files)]
         self.tracks = list(filter(lambda x: x is not None, tracks))
         lens = list(map(lambda x: len(x[0]), self.tracks))
         self.lens = [max(0, l - self.window_len) + 1 for l in lens]
@@ -81,10 +83,13 @@ class MidiDataset(Dataset):
         res = {}
         for trg_inst in trg_seq.get_instruments():
             if len(set(src_seq.get_instruments()).difference(set([trg_inst]))) > 0:
-                res[trg_inst] = {
-                    'src' : src_seq.remove_instruments([trg_inst]).to_remi(ret='index') + [0], 
-                    'trg' : trg_seq.keep_instruments([trg_inst]).to_remi(ret='index') + [0]
-                }
+                src = src_seq.remove_instruments([trg_inst]).to_remi(ret='index') + [0]
+                trg = trg_seq.keep_instruments([trg_inst]).to_remi(ret='index') + [0]
+                if len(src) <= self.max_len and len(trg) <= self.max_len:
+                    res[trg_inst] = {
+                        'src' : src, 
+                        'trg' : trg
+                    }
         return res
 
 
