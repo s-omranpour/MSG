@@ -128,7 +128,7 @@ class BasePerformer(pl.LightningModule):
         with torch.no_grad():
             for i in tqdm(range(n_bars)):
                 s = max(0, i - window + 1)
-                src = MusicRepr.concatenate(bars[s:i+1]).to_remi(ret='index') + [0]
+                src = MusicRepr.concatenate(bars[s:i+1]).to_remi(ret='index')
                 src = torch.tensor(src).long().to(device).unsqueeze(0)
 
                 res_bar = [0]

@@ -4,9 +4,9 @@ import torch
 from torch import nn
 import pytorch_lightning as pl
 
-from src.modules import RemiEmbedding, RemiHead, TransformerDecoderLayer, nucleus_sample
+from src.modules import RemiEmbedding, RemiHead, TransformerMixDecoder, nucleus_sample
 
-class EncoderDecoderPerformer(pl.LightningModule):
+class EncoderMixDecoderPerformer(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -22,8 +22,7 @@ class EncoderDecoderPerformer(pl.LightningModule):
             batch_first=True
         )
         self.encoder = nn.TransformerEncoder(enc_layer, config['encoder']['n_layer'])
-        dec_layer = TransformerDecoderLayer(config['decoder'])
-        self.decoder = nn.TransformerDecoder(dec_layer, config['decoder']['n_layer'])
+        self.decoder = TransformerMixDecoder(config['decoder'])
         self.heads = nn.ModuleDict(
             [
                 [inst, RemiHead(self.config['head'])] 
@@ -39,30 +38,40 @@ class EncoderDecoderPerformer(pl.LightningModule):
     def count_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
     
-    def forward(self, inst, src, trg, src_len=None, trg_len=None, labels=None):
-        assert inst in self.heads
+    def forward(self, trg_inst, inputs):
+        assert trg_inst in self.heads
         
-        ## make all masks
-        src_length_mask = self._generate_length_mask(src_len)
-        trg_length_mask = self._generate_length_mask(trg_len)
-        self_att_mask = self._generate_self_att_mask(trg.shape[1]).to(trg.device)
-        cross_att_mask = self._generate_cross_att_mask(src, src_length_mask, trg, trg_length_mask)
-        
-        ## embedding
-        trg = self.embedding(trg.long())
-        src = self.embedding(src.long())
+        ## making all masks
+        self_att_mask = self._generate_self_att_mask(inputs[trg_inst]['X'].shape[1]).to(inputs[trg_inst]['X'].device)
+        trg_length_mask = self._generate_length_mask(inputs[trg_inst]['X_len'])
+        length_masks = {}
+        cross_att_masks = {}
+        for inst in inputs:
+            if inst != trg_inst:
+                length_masks[inst] = self._generate_length_mask(inputs[inst]['X_len'])
+                cross_att_masks[inst] = self._generate_cross_att_mask(
+                    src=inputs[inst]['X'], 
+                    src_length_mask=length_masks[inst], 
+                    trg=inputs[trg_inst]['X'], 
+                    trg_length_mask=trg_length_mask
+                )
         
         ## encoder
-        memory = self.encoder(src, src_key_padding_mask=src_length_mask)
+        memories = {}
+        for inst in inputs:
+            if inst != trg_inst:
+                src = self.embedding(inputs[inst]['X'].long())
+                memories[inst] = self.encoder(src, src_key_padding_mask=length_masks[inst])
 
         ## decoder
-        h = self.decoder(trg, memory, self_att_mask, cross_att_mask, trg_length_mask, src_length_mask)
+        trg = self.embedding(inputs[trg_inst]['X'].long())
+        h = self.decoder(trg, memories, self_att_mask, cross_att_masks, trg_length_mask, length_masks)
         
         ## head
-        logits = torch.nan_to_num(self.heads[inst](h))
+        logits = torch.nan_to_num(self.heads[trg_inst](h))
         loss = None
-        if labels is not None:
-            loss = self.calculate_loss(logits, labels.long(), trg_length_mask)
+        if 'labels' in inputs[trg_inst]:
+            loss = self.calculate_loss(logits,  inputs[trg_inst]['labels'].long(), trg_length_mask)
         return logits, loss
     
     def calculate_loss(self, logits, labels, mask):
@@ -73,14 +82,7 @@ class EncoderDecoderPerformer(pl.LightningModule):
     def step(self, batch, mode='train'):
         losses = []
         for inst in batch:
-            logits, loss = self.forward(
-                inst, 
-                batch[inst]['src'], 
-                batch[inst]['trg'], 
-                batch[inst]['src_len'], 
-                batch[inst]['trg_len'], 
-                batch[inst]['labels']
-            )
+            logits, loss = self.forward(inst, batch)
             losses += [loss]
             self.log(mode + '_' + str(inst), loss.item())
         
@@ -134,19 +136,24 @@ class EncoderDecoderPerformer(pl.LightningModule):
         self.eval()
         self.to(device)
 
-        bars = seq.get_bars()
-        n_bars = len(bars)
+        n_bars = seq.get_bar_count()
+        tracks = seq.separate_tracks()
+        for inst in tracks:
+            tracks[inst] = tracks[inst].get_bars()
+        
         res = []
         with torch.no_grad():
             for i in tqdm(range(n_bars)):
                 s = max(0, i - window + 1)
-                src = MusicRepr.concatenate(bars[s:i+1]).to_remi(ret='index')
-                src = torch.tensor(src).long().to(device).unsqueeze(0)
+                inputs = {}
+                for inst in tracks:
+                    src = MusicRepr.concatenate(tracks[inst][s:i+1]).to_remi(ret='index')
+                    inputs[inst] = {'X' : torch.tensor(src).long().to(device).unsqueeze(0)}
 
                 res_bar = [0]
                 while True:
-                    trg = torch.tensor(res_bar).long().to(device). unsqueeze(0)
-                    logits, _ = self.forward(trg_inst, src, trg)
+                    inputs[trg_inst] = {'X' : torch.tensor(res_bar).long().to(device). unsqueeze(0)}
+                    logits, _ = self.forward(trg_inst, inputs)
                     next_tok = nucleus_sample(logits[0, -1, :].detach().cpu(), top_p=top_p, t=t)
                     if next_tok == 0:
                         break
