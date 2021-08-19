@@ -3,7 +3,7 @@ from typing import List
 import numpy as np
 import torch
 from tqdm.notebook import tqdm
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset
 from joblib import Parallel, delayed
 from deepnote import MusicRepr, Constants
 
@@ -22,16 +22,8 @@ def get_track(file_path, const, window, src_instruments, trg_instruments):
     except Exception as e:
         print(e)
         return None
-    
-def get_dataloaders(dataset, val_frac=0.1, batch_size=32, n_jobs=2):
-    n = len(dataset)
-    t = int(val_frac * n)
-    td, vd = random_split(dataset, [n-t, t])
-    tl = DataLoader(dataset=td, batch_size=batch_size, pin_memory=False, shuffle=False, num_workers=n_jobs, collate_fn=dataset.fn)
-    vl = DataLoader(dataset=vd, batch_size=batch_size, pin_memory=False, shuffle=False, num_workers=n_jobs, collate_fn=dataset.fn)
-    return tl, vl
 
-class MidiDataset(Dataset):
+class Acc2SoloDataset(Dataset):
     def __init__(
         self, 
         data_dir : str, 
@@ -104,9 +96,6 @@ class MidiDataset(Dataset):
                     X[inst] = {'src' : [], 'trg' : []}
                 X[inst]['src'] += [b[inst]['src']]
                 X[inst]['trg'] += [b[inst]['trg']]
-#                 else:
-#                     X[inst]['src'] += [np.zeros(self.window_len + 1)]
-#                     X[inst]['trg'] += [np.zeros(self.window_len + 1)]
         
         res = {}
         for inst in X:

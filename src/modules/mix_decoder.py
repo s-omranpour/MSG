@@ -1,3 +1,4 @@
+from typing import Dict
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -29,11 +30,11 @@ class TransformerMixDecoderLayer(nn.Module):
     
     def forward(self, 
                 tgt : torch.Tensor, 
-                memories : dict[str, torch.Tensor], 
+                memories : Dict[str, torch.Tensor], 
                 tgt_mask : torch.Tensor = None, 
-                memories_masks : dict[str, torch.Tensor] = None,
+                memories_masks : Dict[str, torch.Tensor] = None,
                 tgt_key_padding_mask : torch.Tensor = None, 
-                memories_key_padding_masks : dict[str, torch.Tensor] = None):
+                memories_key_padding_masks : Dict[str, torch.Tensor] = None):
         
         ## self attention
         x = tgt
@@ -68,7 +69,7 @@ class TransformerMixDecoderLayer(nn.Module):
                 query_length_mask=tgt_key_padding_mask,
             )
 
-        x = self.norm_cross(x + sum(cross_att.values))
+        x = self.norm_cross(x + sum(cross_atts.values()))
 
         ## Feed Forward
         h = self.dropout(self.activation(self.ff1(x)))
@@ -84,11 +85,11 @@ class TransformerMixDecoder(nn.Module):
         
     def forward(self, 
                 tgt : torch.Tensor, 
-                memories : dict[str, torch.Tensor], 
+                memories : Dict[str, torch.Tensor], 
                 tgt_mask : torch.Tensor = None, 
-                memories_masks : dict[str, torch.Tensor] = None,
+                memories_masks : Dict[str, torch.Tensor] = None,
                 tgt_key_padding_mask : torch.Tensor = None, 
-                memories_key_padding_masks : dict[str, torch.Tensor] = None):
+                memories_key_padding_masks : Dict[str, torch.Tensor] = None):
         
         h = tgt
         for layer in self.layers:

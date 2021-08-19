@@ -81,7 +81,7 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
     
     def step(self, batch, mode='train'):
         losses = []
-        for inst in batch:
+        for inst in self.heads:
             logits, loss = self.forward(inst, batch)
             losses += [loss]
             self.log(mode + '_' + str(inst), loss.item())
