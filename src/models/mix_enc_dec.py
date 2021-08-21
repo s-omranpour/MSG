@@ -43,12 +43,12 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
         
         ## making all masks
         self_att_mask = self._generate_self_att_mask(inputs[trg_inst]['X'].shape[1]).to(inputs[trg_inst]['X'].device)
-        trg_length_mask = self._generate_length_mask(inputs[trg_inst]['X_len'])
+        trg_length_mask = self._generate_length_mask(inputs[trg_inst])
         length_masks = {}
         cross_att_masks = {}
         for inst in inputs:
             if inst != trg_inst:
-                length_masks[inst] = self._generate_length_mask(inputs[inst]['X_len'])
+                length_masks[inst] = self._generate_length_mask(inputs[inst])
                 cross_att_masks[inst] = self._generate_cross_att_mask(
                     src=inputs[inst]['X'], 
                     src_length_mask=length_masks[inst], 
@@ -101,9 +101,10 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
     def _generate_self_att_mask(self, sz):
         return torch.tril(torch.ones(sz, sz))
         
-    def _generate_length_mask(self, lengths):
-        if lengths is None:
+    def _generate_length_mask(self, inputs):
+        if 'X_len' not in inputs:
             return None
+        lengths = inputs['X_len']
         mask = torch.zeros(len(lengths), max(lengths)).to(lengths.device)
         for i,l in enumerate(lengths):
             mask[i, :l] = 1.

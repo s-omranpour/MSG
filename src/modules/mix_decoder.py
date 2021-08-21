@@ -52,7 +52,7 @@ class TransformerMixDecoderLayer(nn.Module):
         ## mixed cross attention
         cross_atts = {}
         for inst in memories:
-            if memories_masks is not None:
+            if memories_masks[inst] is not None:
                 memory_mask = memories_masks[inst].repeat_interleave(self.config['n_head'], dim=0)
             else:
                 memory_mask = None

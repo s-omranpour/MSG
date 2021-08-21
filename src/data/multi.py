@@ -71,8 +71,8 @@ class MultiTrackDataset(Dataset):
         res = {}
         for inst in self.instruments:
             x = MusicRepr.concatenate(tracks[inst][offset:offset+self.window_len]).to_remi(ret='index')
-            if self.max_len > 0:
-                x = x[:self.max_len]
+            if len(x) > self.max_len:
+                return {}
             res[inst] = x + [0]
         return res
 
@@ -88,11 +88,12 @@ class MultiTrackDataset(Dataset):
         
         res = {}
         for inst in X:
-            x_len = torch.tensor([len(x)-1 for x in X[inst]])
-            M = max(x_len)
-            res[inst] = {
-                'X': torch.tensor([pad(x[:-1], M - l) for x,l in zip(X[inst], x_len)]),
-                'X_len': x_len,
-                'labels': torch.tensor([pad(x[1:], M - l) for x,l in zip(X[inst], x_len)])
-            }
+            if len(X[inst]):
+                x_len = torch.tensor([len(x)-1 for x in X[inst]])
+                M = max(x_len)
+                res[inst] = {
+                    'X': torch.tensor([pad(x[:-1], M - l) for x,l in zip(X[inst], x_len)]),
+                    'X_len': x_len,
+                    'labels': torch.tensor([pad(x[1:], M - l) for x,l in zip(X[inst], x_len)])
+                }
         return res
