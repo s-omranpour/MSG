@@ -42,8 +42,10 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
     def calculate_loss(self, logits, labels, mask):
         mask = mask * (labels != -100).float()
         loss = self.criterion(logits.transpose(1,2), labels) * mask
-        loss = torch.sum(loss) / torch.sum(mask)
-        return loss
+        s = torch.sum(mask)
+        if s > 0:
+            return torch.sum(loss) / s
+        return None
     
     def forward(self, task, trg_inst, inputs):
         return {
@@ -115,10 +117,10 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
             for inst in self.heads:
                 if inst in batch:
                     logits, loss = self.forward(task, inst, batch)
-                    losses += [loss]
-                    self.log(mode + '_' + task + '_' + str(inst), loss.item())
+                    if loss is not None:
+                        losses += [loss]
+                        self.log(mode + '_' + task + '_' + str(inst), loss.item())
         
-        losses = list(filter(lambda l: l is not None, losses))
         if len(losses):
             total_loss = sum(losses) / len(losses)
             self.log(mode + '_loss', total_loss.item())
