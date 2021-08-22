@@ -110,4 +110,5 @@ class MultiTrackDataset(Dataset):
                     'X_len': x_len,
                     'labels': torch.tensor([pad(x[1:], M - l) for x,l in zip(X[inst], x_len)])
                 }
+                res[inst]['masked_labels'] = res[inst]['X'].masked_fill(res[inst]['X'] == res[inst]['X_masked'], -100)
         return res

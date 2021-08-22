@@ -40,6 +40,7 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
     
     def calculate_loss(self, logits, labels, mask):
+        mask = mask * (labels != -100).float()
         loss = self.criterion(logits.transpose(1,2), labels) * mask
         loss = torch.sum(loss) / torch.sum(mask)
         return loss
@@ -57,8 +58,8 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
         h = self.encoder(src, src_key_padding_mask=src_length_mask)
         logits = self.heads[trg_inst](h)
         loss = None
-        if 'labels' in inputs[trg_inst] and src_length_mask is not None:
-            loss = self.calculate_loss(logits,  inputs[trg_inst]['labels'].long(), src_length_mask)
+        if 'masked_labels' in inputs[trg_inst] and src_length_mask is not None:
+            loss = self.calculate_loss(logits,  inputs[trg_inst]['masked_labels'].long(), src_length_mask)
         return logits, loss
     
     def forward_clm(self, trg_inst, inputs):
@@ -117,6 +118,7 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
                     losses += [loss]
                     self.log(mode + '_' + task + '_' + str(inst), loss.item())
         
+        losses = list(filter(lambda l: l is not None, losses))
         if len(losses):
             total_loss = sum(losses) / len(losses)
             self.log(mode + '_loss', total_loss.item())
