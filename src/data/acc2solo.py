@@ -5,7 +5,7 @@ import torch
 from tqdm.notebook import tqdm
 from torch.utils.data import Dataset
 from joblib import Parallel, delayed
-from deepnote import MusicRepr, Constants
+from deepmusic import MusicRepr, Constants
 
 def get_track(file_path, const, window, src_instruments, trg_instruments):
     try:
@@ -34,6 +34,7 @@ class Acc2SoloDataset(Dataset):
         max_files : int = 100, 
         max_len : int = 1024,
         window_len : int = 10,
+        mask_prob : float = 0.15,
         n_jobs : int = 2):
 
         super().__init__()
@@ -44,6 +45,7 @@ class Acc2SoloDataset(Dataset):
         self.trg_instruments = trg_instruments
         self.src_instruments = src_instruments
         self.pad_value = pad_value
+        self.mask_prob = mask_prob
 
         ## loading midis
         files = list(filter(lambda x: x.endswith('.mid'), os.listdir(data_dir)))[:max_files]
@@ -83,6 +85,16 @@ class Acc2SoloDataset(Dataset):
                         'trg' : trg
                     }
         return res
+    
+    def mask(self, tokens):
+        res = []
+        for i, tok in enumerate(tokens):
+            prob = random.random()
+            if prob <= self.mask_prob:
+                res += [self.const.all_tokens.index('MASK')]
+            else:
+                res += [tok]
+        return res
 
 
     def fn(self, batch):
@@ -106,6 +118,7 @@ class Acc2SoloDataset(Dataset):
             if trg_M > 0:
                 res[inst] = {
                     'src': torch.tensor([pad(x[:-1], src_M - l) for x,l in zip(X[inst]['src'], src_len)]),
+                    'src_masked': torch.tensor([pad(self.mask(x[:-1]), src_M - l) for x,l in zip(X[inst]['src'], src_len)]),
                     'trg': torch.tensor([pad(x[:-1], trg_M - l) for x,l in zip(X[inst]['trg'], trg_len)]),
                     'src_len': src_len,
                     'trg_len': trg_len,

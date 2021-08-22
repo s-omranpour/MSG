@@ -1,5 +1,5 @@
 from tqdm.notebook import tqdm
-from deepnote import MusicRepr, Constants
+from deepmusic import MusicRepr, Constants
 import torch
 from torch import nn
 import pytorch_lightning as pl
@@ -11,6 +11,7 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
         super().__init__()
         self.config = config
         self.criterion = nn.CrossEntropyLoss(reduction='none')
+        print('training tasks:', ', '.join(config['tasks']))
         
         self.embedding = RemiEmbedding(config['embedding'])
         enc_layer = nn.TransformerEncoderLayer(
@@ -38,7 +39,40 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
     def count_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
     
-    def forward(self, trg_inst, inputs):
+    def calculate_loss(self, logits, labels, mask):
+        loss = self.criterion(logits.transpose(1,2), labels) * mask
+        loss = torch.sum(loss) / torch.sum(mask)
+        return loss
+    
+    def forward(self, task, trg_inst, inputs):
+        return {
+            's2s' : self.forward_s2s,
+            'clm' : self.forward_clm,
+            'mlm' : self.forward_mlm
+        }[task](trg_inst, inputs)
+    
+    def forward_mlm(self, trg_inst, inputs):
+        src = self.embedding(inputs[trg_inst]['X_masked'].long())
+        src_length_mask = self._generate_length_mask(inputs[trg_inst])
+        h = self.encoder(src, src_key_padding_mask=src_length_mask)
+        logits = self.heads[trg_inst](h)
+        loss = None
+        if 'labels' in inputs[trg_inst] and src_length_mask is not None:
+            loss = self.calculate_loss(logits,  inputs[trg_inst]['labels'].long(), src_length_mask)
+        return logits, loss
+    
+    def forward_clm(self, trg_inst, inputs):
+        trg = self.embedding(inputs[trg_inst]['X'].long())
+        trg_length_mask = self._generate_length_mask(inputs[trg_inst])
+        self_att_mask = self._generate_self_att_mask(trg.shape[1]).to(trg.device)
+        h = self.decoder(trg, tgt_mask=self_att_mask, tgt_key_padding_mask=trg_length_mask)
+        logits = self.heads[trg_inst](h)
+        loss = None
+        if 'labels' in inputs[trg_inst] and trg_length_mask is not None:
+            loss = self.calculate_loss(logits,  inputs[trg_inst]['labels'].long(), trg_length_mask)
+        return logits, loss
+    
+    def forward_s2s(self, trg_inst, inputs):
         assert trg_inst in self.heads
         
         ## making all masks
@@ -74,17 +108,14 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
             loss = self.calculate_loss(logits,  inputs[trg_inst]['labels'].long(), trg_length_mask)
         return logits, loss
     
-    def calculate_loss(self, logits, labels, mask):
-        loss = self.criterion(logits.transpose(1,2), labels) * mask
-        loss = torch.sum(loss) / torch.sum(mask)
-        return loss
-    
     def step(self, batch, mode='train'):
         losses = []
-        for inst in self.heads:
-            logits, loss = self.forward(inst, batch)
-            losses += [loss]
-            self.log(mode + '_' + str(inst), loss.item())
+        for task in self.config['tasks']:
+            for inst in self.heads:
+                if inst in batch:
+                    logits, loss = self.forward(task, inst, batch)
+                    losses += [loss]
+                    self.log(mode + '_' + task + '_' + str(inst), loss.item())
         
         if len(losses):
             total_loss = sum(losses) / len(losses)

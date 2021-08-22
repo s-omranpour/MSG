@@ -1,11 +1,12 @@
 import os
 from typing import List
 import numpy as np
+import random
 import torch
 from tqdm.notebook import tqdm
 from torch.utils.data import Dataset
 from joblib import Parallel, delayed
-from deepnote import MusicRepr, Constants
+from deepmusic import MusicRepr, Constants
 
 def get_track(file_path, const, window, instruments):
     try:
@@ -31,6 +32,7 @@ class MultiTrackDataset(Dataset):
         max_files : int = 100, 
         max_len : int = 1024,
         window_len : int = 10,
+        mask_prob : float = 0.15,
         n_jobs : int = 2):
 
         super().__init__()
@@ -40,6 +42,7 @@ class MultiTrackDataset(Dataset):
         self.max_len = max_len
         self.instruments = instruments
         self.pad_value = pad_value
+        self.mask_prob = mask_prob
 
         ## loading midis
         if files is None:
@@ -75,6 +78,16 @@ class MultiTrackDataset(Dataset):
                 return {}
             res[inst] = x + [0]
         return res
+    
+    def mask(self, tokens):
+        res = []
+        for i, tok in enumerate(tokens):
+            prob = random.random()
+            if prob <= self.mask_prob:
+                res += [self.const.all_tokens.index('MASK')]
+            else:
+                res += [tok]
+        return res
 
 
     def fn(self, batch):
@@ -93,6 +106,7 @@ class MultiTrackDataset(Dataset):
                 M = max(x_len)
                 res[inst] = {
                     'X': torch.tensor([pad(x[:-1], M - l) for x,l in zip(X[inst], x_len)]),
+                    'X_masked' : torch.tensor([pad(self.mask(x[:-1]), M - l) for x,l in zip(X[inst], x_len)]),
                     'X_len': x_len,
                     'labels': torch.tensor([pad(x[1:], M - l) for x,l in zip(X[inst], x_len)])
                 }

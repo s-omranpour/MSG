@@ -1,5 +1,5 @@
 from tqdm.notebook import tqdm
-from deepnote import MusicRepr, Constants
+from deepmusic import MusicRepr, Constants
 import torch
 from torch import nn
 import pytorch_lightning as pl

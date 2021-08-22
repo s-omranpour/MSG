@@ -29,7 +29,7 @@ class TransformerDecoderLayer(nn.Module):
     
     def forward(self, 
                 tgt : torch.Tensor, 
-                memory : torch.Tensor, 
+                memory : torch.Tensor = None, 
                 tgt_mask : torch.Tensor = None, 
                 memory_mask : torch.Tensor = None,
                 tgt_key_padding_mask : torch.Tensor = None, 
@@ -37,9 +37,6 @@ class TransformerDecoderLayer(nn.Module):
         
         ## self attention
         x = tgt
-        if tgt_mask is None:
-            tgt_mask = self._generate_self_att_mask(x.shape[1]).to(x.device)
-
         self_att = self.self_attention(
             x, x, x,
             att_mask=tgt_mask,
@@ -49,16 +46,17 @@ class TransformerDecoderLayer(nn.Module):
         x = self.norm1(x + self_att)
 
         ## cross attention
-        if memory_mask is not None:
-            memory_mask = memory_mask.repeat_interleave(self.config['n_head'], dim=0)
-            
-        cross_att = self.cross_attention(
-            x, memory, memory,
-            att_mask=memory_mask,
-            key_length_mask=memory_key_padding_mask,
-            query_length_mask=tgt_key_padding_mask,
-        )
-        x = self.norm_cross(x + cross_att)
+        if memory is not None:
+            if memory_mask is not None:
+                memory_mask = memory_mask.repeat_interleave(self.config['n_head'], dim=0)
+
+            cross_att = self.cross_attention(
+                x, memory, memory,
+                att_mask=memory_mask,
+                key_length_mask=memory_key_padding_mask,
+                query_length_mask=tgt_key_padding_mask,
+            )
+            x = self.norm_cross(x + cross_att)
 
         ## Feed Forward
         h = self.dropout(self.activation(self.ff1(x)))

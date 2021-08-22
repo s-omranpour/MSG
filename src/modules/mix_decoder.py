@@ -30,7 +30,7 @@ class TransformerMixDecoderLayer(nn.Module):
     
     def forward(self, 
                 tgt : torch.Tensor, 
-                memories : Dict[str, torch.Tensor], 
+                memories : Dict[str, torch.Tensor] = None, 
                 tgt_mask : torch.Tensor = None, 
                 memories_masks : Dict[str, torch.Tensor] = None,
                 tgt_key_padding_mask : torch.Tensor = None, 
@@ -38,9 +38,6 @@ class TransformerMixDecoderLayer(nn.Module):
         
         ## self attention
         x = tgt
-        if tgt_mask is None:
-            tgt_mask = self._generate_self_att_mask(x.shape[1]).to(x.device)
-
         self_att = self.self_attention(
             x, x, x,
             att_mask=tgt_mask,
@@ -50,26 +47,27 @@ class TransformerMixDecoderLayer(nn.Module):
         x = self.norm1(x + self_att)
 
         ## mixed cross attention
-        cross_atts = {}
-        for inst in memories:
-            if memories_masks[inst] is not None:
-                memory_mask = memories_masks[inst].repeat_interleave(self.config['n_head'], dim=0)
-            else:
-                memory_mask = None
-            
-            if memories_key_padding_masks is not None:
-                memory_key_padding_mask = memories_key_padding_masks[inst]
-            else:
-                memory_key_padding_mask = None
-            
-            cross_atts[inst] = self.cross_attention(
-                x, memories[inst], memories[inst],
-                att_mask=memory_mask,
-                key_length_mask=memory_key_padding_mask,
-                query_length_mask=tgt_key_padding_mask,
-            )
+        if memories is not None:
+            cross_atts = {}
+            for inst in memories:
+                if memories_masks[inst] is not None:
+                    memory_mask = memories_masks[inst].repeat_interleave(self.config['n_head'], dim=0)
+                else:
+                    memory_mask = None
 
-        x = self.norm_cross(x + sum(cross_atts.values()))
+                if memories_key_padding_masks is not None:
+                    memory_key_padding_mask = memories_key_padding_masks[inst]
+                else:
+                    memory_key_padding_mask = None
+
+                cross_atts[inst] = self.cross_attention(
+                    x, memories[inst], memories[inst],
+                    att_mask=memory_mask,
+                    key_length_mask=memory_key_padding_mask,
+                    query_length_mask=tgt_key_padding_mask,
+                )
+
+            x = self.norm_cross(x + sum(cross_atts.values()))
 
         ## Feed Forward
         h = self.dropout(self.activation(self.ff1(x)))
@@ -85,7 +83,7 @@ class TransformerMixDecoder(nn.Module):
         
     def forward(self, 
                 tgt : torch.Tensor, 
-                memories : Dict[str, torch.Tensor], 
+                memories : Dict[str, torch.Tensor] = None, 
                 tgt_mask : torch.Tensor = None, 
                 memories_masks : Dict[str, torch.Tensor] = None,
                 tgt_key_padding_mask : torch.Tensor = None, 
