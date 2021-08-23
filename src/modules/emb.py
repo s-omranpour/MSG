@@ -14,10 +14,11 @@ class Embeddings(nn.Module):
     
     
 class NotePositionalEmbedding(nn.Module):
-    def __init__(self, d_model, max_len=16):
+    def __init__(self, d_model, max_pos=16, max_bar=10):
         super().__init__()
         self.const = Constants() if const is None else const
-        self.lut = nn.Embedding(max_len, d_model)
+        self.pos_emb = nn.Embedding(max_pos, d_model)
+        self.bar_emb = nn.Embedding(max_bar, d_model)
         
     def get_pos(self, x):
         toks = [const.all_tokens[idx] for idx in x]
@@ -30,10 +31,21 @@ class NotePositionalEmbedding(nn.Module):
             else:
                 poses += [poses[-1]]
         return torch.tensor(poses)
+    
+    def get_bar(self, x):
+        toks = [const.all_tokens[idx] for idx in x]
+        bars = []
+        for i, tok in enumerate(toks):
+            if tok == 'Bar':
+                bars += [len(bars)]
+            else:
+                bars += [bars[-1]]
+        return torch.tensor(bars)
         
     def forward(self, x):
         poses = torch.Tensor([self.get_pos(a) for a in x]).long()
-        return self.lut(poses)
+        bars = torch.Tensor([self.get_bar(a) for a in x]).long()
+        return self.pos_emb(poses) + self.bar_emb(bars)
 
 
 class RelativePositionalEncoding(nn.Module):
@@ -65,7 +77,7 @@ class RemiEmbedding(nn.Module):
         elif config['positional_embedding'] == 'relative':
             self.pos_emb = RelativePositionalEncoding(config['d_model'], config['max_len'])
         elif config['positional_embedding'] == 'note':
-            self.pos_emb = NotePositionalEmbedding(config['d_model'], config['max_len'])
+            self.pos_emb = NotePositionalEmbedding(config['d_model'], config['max_pos'], config['max_bar'])
         elif config['positional_embedding'] == 'absolute':
             self.pos_emb = nn.Embedding(config['max_len'], config['d_model'])
         

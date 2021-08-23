@@ -48,6 +48,7 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
         return None
     
     def forward(self, task, trg_inst, inputs):
+        assert task in self.config['tasks'], f"Model is not configured for {task}."
         return {
             's2s' : self.forward_s2s,
             'clm' : self.forward_clm,
@@ -189,7 +190,7 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
                 res_bar = [0]
                 while True:
                     inputs[trg_inst] = {'X' : torch.tensor(res_bar).long().to(device). unsqueeze(0)}
-                    logits, _ = self.forward(trg_inst, inputs)
+                    logits, _ = self.forward_s2s(trg_inst, inputs)
                     next_tok = nucleus_sample(logits[0, -1, :].detach().cpu(), top_p=top_p, t=t)
                     if next_tok == 0:
                         break
