@@ -74,9 +74,11 @@ class MultiTrackDataset(Dataset):
         res = {}
         for inst in self.instruments:
             x = MusicRepr.concatenate(tracks[inst][offset:offset+self.window_len]).to_remi(ret='index')
-            if len(x) > self.max_len:
-                return {}
             res[inst] = x + [0]
+
+        lens = [len(x) for x in res.values()]
+        if sum(lens) < 100 or max(lens) > self.max_len:
+            return {}
         return res
     
     def mask(self, tokens):

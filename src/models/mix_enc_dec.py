@@ -49,6 +49,9 @@ class EncoderMixDecoderPerformer(pl.LightningModule):
     
     def forward(self, task, trg_inst, inputs):
         assert task in self.config['tasks'], f"Model is not configured for {task}."
+        if trg_inst not in inputs:
+            return None, None
+        
         return {
             's2s' : self.forward_s2s,
             'clm' : self.forward_clm,
