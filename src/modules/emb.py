@@ -14,14 +14,15 @@ class Embeddings(nn.Module):
     
     
 class NotePositionalEmbedding(nn.Module):
-    def __init__(self, d_model, max_pos=16, max_bar=10):
+    def __init__(self, d_emb, const, max_bar=10):
         super().__init__()
-        self.const = Constants() if const is None else const
-        self.pos_emb = nn.Embedding(max_pos, d_model)
-        self.bar_emb = nn.Embedding(max_bar, d_model)
+        self.const = const
+        self.max_bar = max_bar
+        self.pos_emb = Embeddings(const.n_bar_steps, d_emb)
+        self.bar_emb = Embeddings(max_bar, d_emb)
         
     def get_pos(self, x):
-        toks = [const.all_tokens[idx] for idx in x]
+        toks = [self.const.all_tokens[idx] for idx in x]
         poses = []
         for i, tok in enumerate(toks):
             if tok == 'Bar':
@@ -33,18 +34,19 @@ class NotePositionalEmbedding(nn.Module):
         return torch.tensor(poses)
     
     def get_bar(self, x):
-        toks = [const.all_tokens[idx] for idx in x]
-        bars = []
+        toks = [self.const.all_tokens[idx] for idx in x]
+        bars = [-1]
         for i, tok in enumerate(toks):
             if tok == 'Bar':
-                bars += [len(bars)]
+                v = min(bars[-1] + 1, self.max_bar - 1)
+                bars += [v]
             else:
                 bars += [bars[-1]]
-        return torch.tensor(bars)
+        return torch.tensor(bars[1:])
         
     def forward(self, x):
-        poses = torch.Tensor([self.get_pos(a) for a in x]).long()
-        bars = torch.Tensor([self.get_bar(a) for a in x]).long()
+        poses = torch.stack([self.get_pos(a) for a in x], dim=0).long().to(x.device)
+        bars = torch.stack([self.get_bar(a) for a in x], dim=0).long().to(x.device)
         return self.pos_emb(poses) + self.bar_emb(bars)
 
 
@@ -67,23 +69,37 @@ class RelativePositionalEncoding(nn.Module):
 class RemiEmbedding(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         
-        assert config['positional_embedding'] in ['none', 'relative', 'absolute']
+        self.tok_emb = Embeddings(config['n_vocab'], config['d_tok_emb'])
 
-        self.dropout = nn.Dropout(p=config['dropout'])
-        self.emb = nn.Embedding(config['n_vocab'], config['d_model'])
-        if config['positional_embedding'] == 'none':
-            self.pos_emb = None
-        elif config['positional_embedding'] == 'relative':
-            self.pos_emb = RelativePositionalEncoding(config['d_model'], config['max_len'])
+        assert config['positional_embedding'] in ['relative', 'note']
+        if config['positional_embedding'] == 'relative':
+            self.pos_emb = RelativePositionalEncoding(config['d_pos_emb'], config['max_len'])
         elif config['positional_embedding'] == 'note':
-            self.pos_emb = NotePositionalEmbedding(config['d_model'], config['max_pos'], config['max_bar'])
-        elif config['positional_embedding'] == 'absolute':
-            self.pos_emb = nn.Embedding(config['max_len'], config['d_model'])
+            self.pos_emb = NotePositionalEmbedding(config['d_pos_emb'], config['const'], config['max_bar'])
+
+        d_in = config['d_tok_emb']
+        if config['style_classes'] == 0:
+            self.style_emb = None
+        else:
+            self.style_emb = Embeddings(config['style_classes'], config['d_style_emb'])
+            d_in += config['d_style_emb']
         
-    def forward(self, x):
-        h = self.emb(x)
-        if self.pos_emb is not None:
-            pos = torch.arange(h.shape[1]).unsqueeze(0).repeat(h.shape[0], 1).to(h.device)
-            h += self.pos_emb(pos)
-        return self.dropout(h)
+        if config['concat_pos']:
+            d_in += config['d_pos_emb']
+        self.proj = nn.Linear(d_in, config['d_model'])
+        self.dropout = nn.Dropout(p=config['dropout'])
+        
+    def forward(self, x, s=None):
+        h = self.tok_emb(x.long())
+        pos = self.pos_emb(x.long())
+        if self.config['concat_pos']:
+            h = torch.cat([h, pos], axis=-1)
+        else:
+            h += pos
+        if self.style_emb is not None:
+            style = self.style_emb(s)
+            h = torch.cat([h, style], axis=-1)
+
+        return self.dropout(self.proj(h))

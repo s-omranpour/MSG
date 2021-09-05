@@ -8,6 +8,10 @@ class TransformerMixDecoderLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+
+        self.instrument_weights = nn.ParameterDict(
+            dict([(inst, nn.Parameter(torch.randn(1))) for inst in config['instruments']])
+        )
         
         self.self_attention = Attention(
             d_model=config['d_model'], 
@@ -49,25 +53,28 @@ class TransformerMixDecoderLayer(nn.Module):
         ## mixed cross attention
         if memories is not None:
             cross_atts = {}
-            for inst in memories:
-                if memories_masks[inst] is not None:
-                    memory_mask = memories_masks[inst].repeat_interleave(self.config['n_head'], dim=0)
+            for inst in self.instrument_weights:
+                if inst in memories:
+                    if memories_masks[inst] is not None:
+                        memory_mask = memories_masks[inst].repeat_interleave(self.config['n_head'], dim=0)
+                    else:
+                        memory_mask = None
+
+                    if memories_key_padding_masks is not None:
+                        memory_key_padding_mask = memories_key_padding_masks[inst]
+                    else:
+                        memory_key_padding_mask = None
+
+                    cross_atts[inst] = self.cross_attention(
+                        x, memories[inst], memories[inst],
+                        att_mask=memory_mask,
+                        key_length_mask=memory_key_padding_mask,
+                        query_length_mask=tgt_key_padding_mask,
+                    )
                 else:
-                    memory_mask = None
-
-                if memories_key_padding_masks is not None:
-                    memory_key_padding_mask = memories_key_padding_masks[inst]
-                else:
-                    memory_key_padding_mask = None
-
-                cross_atts[inst] = self.cross_attention(
-                    x, memories[inst], memories[inst],
-                    att_mask=memory_mask,
-                    key_length_mask=memory_key_padding_mask,
-                    query_length_mask=tgt_key_padding_mask,
-                )
-
-            x = self.norm_cross(x + sum(cross_atts.values()))
+                    cross_atts[inst] = torch.zeros_like(x)
+            inst_weights = F.softmax(torch.tensor([self.instrument_weights[inst] for inst in self.instrument_weights]))
+            x = self.norm_cross(x + sum([inst_weights[i]*cross_atts[inst] for i,inst in enumerate(self.instrument_weights)]))
 
         ## Feed Forward
         h = self.dropout(self.activation(self.ff1(x)))
