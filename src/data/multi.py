@@ -52,7 +52,7 @@ class MultiTrackDataset(Dataset):
         tracks = Parallel(n_jobs=n_jobs)(
             delayed(get_track)(
                 data_dir + file, const, window_len, instruments
-            ) for file in tqdm(files)
+            ) for file in tqdm(sorted(files))
         )
 
         tracks = list(filter(lambda x: x is not None, tracks))
@@ -69,17 +69,24 @@ class MultiTrackDataset(Dataset):
                 return i-1, idx - self.cum_lens[i-1]
 
     def __getitem__(self, idx):
+        def trim(tracks, offset, m, M):
+            res = {}
+            for inst in self.instruments:
+                x = MusicRepr.concatenate(tracks[inst][offset:offset+self.window_len]).to_remi(ret='index')
+                res[inst] = x + [0]
+
+            lens = [len(x) for x in res.values()]
+            if sum(lens) < m or max(lens) > M:
+                return {}
+            return res
+            
         ind, offset = self.get_idx(idx)
         tracks = self.tracks[ind]
-        res = {}
-        for inst in self.instruments:
-            x = MusicRepr.concatenate(tracks[inst][offset:offset+self.window_len]).to_remi(ret='index')
-            res[inst] = x + [0]
-
-        lens = [len(x) for x in res.values()]
-        if sum(lens) < 100 or max(lens) > self.max_len:
-            return {}
-        return res
+        for l in range(self.window_len, 0, -1):
+            res = trim(tracks, offset, m=len(self.instruments)*20, M=self.max_len)
+            if len(res):
+                return res
+        return {}
     
     def mask(self, tokens):
         res = []

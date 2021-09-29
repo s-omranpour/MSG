@@ -12,9 +12,11 @@ class Experiment:
         self.save_path = root_dir + name + '/'
         self.weights_path = self.save_path + 'weights/'
         self.logs_path = self.save_path + 'logs/'
+        self.assets_path = self.save_path + 'assets/'
         os.makedirs(self.save_path, exist_ok=True)
         os.makedirs(self.weights_path, exist_ok=True)
         os.makedirs(self.logs_path, exist_ok=True)
+        os.makedirs(self.assets_path, exist_ok=True)
         
         if self.load_configs():
             assert data_conf is not None and model_conf is not None
