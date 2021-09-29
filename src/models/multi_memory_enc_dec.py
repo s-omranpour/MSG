@@ -10,7 +10,7 @@ class EncoderMultiMemoryDecoderPerformer(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.criterion = nn.CrossEntropyLoss(reduction='none')
+        self.criterion = nn.CrossEntropyLoss(ignore_index=-100, reduction='none')
         print('training tasks:', ', '.join(config['tasks']))
         
         self.embedding = RemiEmbedding(config['embedding'])
@@ -42,7 +42,7 @@ class EncoderMultiMemoryDecoderPerformer(pl.LightningModule):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
     
     def calculate_loss(self, logits, labels, mask):
-        mask = mask * (labels != -100).float()
+        mask = (labels != -100).float() * mask
         loss = self.criterion(logits.transpose(1,2), labels) * mask
         s = torch.sum(mask)
         if s > 0:
@@ -66,19 +66,19 @@ class EncoderMultiMemoryDecoderPerformer(pl.LightningModule):
         h = self.encoder(src, src_key_padding_mask=src_length_mask)
         logits = self.heads[trg_inst](h)
         loss = None
-        if 'masked_labels' in inputs[trg_inst] and src_length_mask is not None:
-            loss = self.calculate_loss(logits,  inputs[trg_inst]['masked_labels'].long(), src_length_mask)
+        if 'masked_labels' in inputs[trg_inst]:
+            loss = self.calculate_loss(logits, inputs[trg_inst]['masked_labels'].long(), src_length_mask)
         return logits, loss
     
     def forward_clm(self, trg_inst, inputs):
         trg = self.embedding(inputs[trg_inst]['X'].long())
-        trg_length_mask = self._generate_length_mask(inputs[trg_inst])
+        trg_length_mask = self._generate_length_mask(inputs[trg_inst]['X_len'])
         self_att_mask = self._generate_self_att_mask(trg.shape[1]).to(trg.device)
         h = self.decoder(trg, tgt_mask=self_att_mask, tgt_key_padding_mask=trg_length_mask)
         logits = self.heads[trg_inst](h)
         loss = None
-        if 'labels' in inputs[trg_inst] and trg_length_mask is not None:
-            loss = self.calculate_loss(logits,  inputs[trg_inst]['labels'].long(), trg_length_mask)
+        if 'labels' in inputs[trg_inst]:
+            loss = self.calculate_loss(logits, inputs[trg_inst]['labels'].long(), trg_length_mask)
         return logits, loss
     
     def forward_s2s(self, trg_inst, inputs):
@@ -86,12 +86,12 @@ class EncoderMultiMemoryDecoderPerformer(pl.LightningModule):
         
         ## making all masks
         self_att_mask = self._generate_self_att_mask(inputs[trg_inst]['X'].shape[1]).to(inputs[trg_inst]['X'].device)
-        trg_length_mask = self._generate_length_mask(inputs[trg_inst])
+        trg_length_mask = self._generate_length_mask(inputs[trg_inst]['X_len'])
         length_masks = {}
         cross_att_masks = {}
         for inst in inputs:
             if inst != trg_inst:
-                length_masks[inst] = self._generate_length_mask(inputs[inst])
+                length_masks[inst] = self._generate_length_mask(inputs[inst]['X_len'])
                 cross_att_masks[inst] = self._generate_cross_att_mask(
                     src=inputs[inst]['X'], 
                     src_length_mask=length_masks[inst], 
@@ -114,7 +114,7 @@ class EncoderMultiMemoryDecoderPerformer(pl.LightningModule):
         logits = torch.nan_to_num(self.heads[trg_inst](h))
         loss = None
         if 'labels' in inputs[trg_inst]:
-            loss = self.calculate_loss(logits,  inputs[trg_inst]['labels'].long(), trg_length_mask)
+            loss = self.calculate_loss(logits, inputs[trg_inst]['labels'].long(), trg_length_mask)
         return logits, loss
     
     def step(self, batch, mode='train'):
@@ -142,10 +142,9 @@ class EncoderMultiMemoryDecoderPerformer(pl.LightningModule):
     def _generate_self_att_mask(self, sz):
         return torch.tril(torch.ones(sz, sz))
         
-    def _generate_length_mask(self, inputs):
-        if 'X_len' not in inputs:
+    def _generate_length_mask(self, lengths=None):
+        if lengths is None:
             return None
-        lengths = inputs['X_len']
         mask = torch.zeros(len(lengths), max(lengths)).to(lengths.device)
         for i,l in enumerate(lengths):
             mask[i, :l] = 1.
@@ -189,20 +188,31 @@ class EncoderMultiMemoryDecoderPerformer(pl.LightningModule):
                 s = max(0, i - window + 1)
                 inputs = {}
                 for inst in tracks:
-                    src = MusicRepr.concatenate(tracks[inst][s:i+1]).to_remi(ret='index')
-                    inputs[inst] = {'X' : torch.tensor(src).long().to(device).unsqueeze(0)}
+                    src = list(filter(
+                        lambda x: not x.startswith('NoteInstFamily'), 
+                        MusicRepr.concatenate(tracks[inst][s:i+1]).to_remi(ret='token')
+                    ))
+                    src = [self.config['const'].all_tokens.index(e) for e in src]
+                    inputs[inst] = {'X' : torch.tensor(src).long().to(device).unsqueeze(0), 'X_len' : None}
 
                 res_bar = [0]
                 while True:
-                    inputs[trg_inst] = {'X' : torch.tensor(res_bar).long().to(device). unsqueeze(0)}
+                    inputs[trg_inst] = {'X' : torch.tensor(res_bar).long().to(device). unsqueeze(0), 'X_len' : None}
                     logits, _ = self.forward_s2s(trg_inst, inputs)
                     next_tok = nucleus_sample(logits[0, -1, :].detach().cpu(), top_p=top_p, t=t)
                     if next_tok == 0:
                         break
                     res_bar += [next_tok]
-
                 res += res_bar
-        return res
+
+        res = [self.config['const'].all_tokens[e] for e in res]
+        i = 0
+        while i < len(res):
+            if res[i].startswith('NotePitch'):
+                res = res[:i] + [f'NoteInstFamily_{trg_inst}'] + res[i:]
+                i += 1
+            i += 1
+        return ' '.join(res)
 
    
     

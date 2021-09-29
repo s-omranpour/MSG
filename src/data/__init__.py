@@ -10,3 +10,7 @@ def get_dataloaders(dataset, val_frac=0.1, batch_size=32, n_jobs=2):
     tl = DataLoader(dataset=td, batch_size=batch_size, pin_memory=False, shuffle=False, num_workers=n_jobs, collate_fn=dataset.fn)
     vl = DataLoader(dataset=vd, batch_size=batch_size, pin_memory=False, shuffle=False, num_workers=n_jobs, collate_fn=dataset.fn)
     return tl, vl
+
+
+def get_dataloader(dataset, batch_size=32, n_jobs=2):
+    return DataLoader(dataset, batch_size=batch_size, pin_memory=False, shuffle=False, num_workers=n_jobs, collate_fn=dataset.fn)

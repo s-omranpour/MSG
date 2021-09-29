@@ -72,7 +72,9 @@ class MultiTrackDataset(Dataset):
         def trim(tracks, offset, m, M):
             res = {}
             for inst in self.instruments:
-                x = MusicRepr.concatenate(tracks[inst][offset:offset+self.window_len]).to_remi(ret='index')
+                x = MusicRepr.concatenate(tracks[inst][offset:offset+self.window_len]).to_remi(ret='token')
+                x = list(filter(lambda e: not e.startswith('NoteInstFamily'), x))
+                x = [self.const.all_tokens.index(e) for e in x]
                 res[inst] = x + [0]
 
             lens = [len(x) for x in res.values()]
@@ -83,7 +85,7 @@ class MultiTrackDataset(Dataset):
         ind, offset = self.get_idx(idx)
         tracks = self.tracks[ind]
         for l in range(self.window_len, 0, -1):
-            res = trim(tracks, offset, m=len(self.instruments)*20, M=self.max_len)
+            res = trim(tracks, offset, m=100, M=self.max_len)
             if len(res):
                 return res
         return {}
@@ -114,10 +116,10 @@ class MultiTrackDataset(Dataset):
                 x_len = torch.tensor([len(x)-1 for x in X[inst]])
                 M = max(x_len)
                 res[inst] = {
+#                     'X_masked' : torch.tensor([pad(self.mask(x[:-1]), Mx - l) for x,l in zip(X[inst], x_len)]),
                     'X': torch.tensor([pad(x[:-1], M - l) for x,l in zip(X[inst], x_len)]),
-                    'X_masked' : torch.tensor([pad(self.mask(x[:-1]), M - l) for x,l in zip(X[inst], x_len)]),
                     'X_len': x_len,
-                    'labels': torch.tensor([pad(x[1:], M - l) for x,l in zip(X[inst], x_len)])
+                    'labels': torch.tensor([pad(x[1:], M - l) for x,l in zip(X[inst], x_len)]),
                 }
-                res[inst]['masked_labels'] = res[inst]['X'].masked_fill(res[inst]['X'] == res[inst]['X_masked'], -100)
+#                 res[inst]['masked_labels'] = res[inst]['X'].masked_fill(res[inst]['X'] == res[inst]['X_masked'], -100)
         return res
